@@ -55,32 +55,41 @@ class DQN(nn.Module):
 
     def __init__(self, h, w, outputs):
         super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=5, stride=2)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
-        self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
-        self.bn3 = nn.BatchNorm2d(32)
+        #这里本来应该是4个channel即：
+        #self.conv1 = nn.Conv2d(4, 16, kernel_size=8, stride=4)
+        #但是由于现在state只包含了一帧所以现在这样写以免报错：
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=8, stride=4)
+       # self.bn1 = nn.BatchNorm2d(16)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=4, stride=2)
+       # self.bn2 = nn.BatchNorm2d(32)
+
+       # self.bn3 = nn.BatchNorm2d(32)
 
         # Number of Linear input connections depends on output of conv2d layers
         # and therefore the input image size, so compute it.
-        def conv2d_size_out(size, kernel_size = 5, stride = 2):
-            return (size - (kernel_size - 1) - 1) // stride  + 1
-        convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w)))
-        convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h)))
+        def conv2d_size_out1(size, kernel_size=8, stride=4):
+            return (size - (kernel_size - 1) - 1) // stride + 1
+
+        def conv2d_size_out2(size, kernel_size = 4, stride=2):
+            return (size - (kernel_size - 1) - 1) // stride + 1
+
+        convw = conv2d_size_out2(conv2d_size_out1(w))
+        convh = conv2d_size_out2(conv2d_size_out1(h))
         linear_input_size = convw * convh * 32
-        self.head = nn.Linear(linear_input_size, outputs)
+        self.fullyConnected = nn.Linear(linear_input_size, 256)
+        self.head = nn.Linear(256, outputs)
 
     # Called with either one element to determine next action, or a batch
     # during optimization. Returns tensor([[left0exp,right0exp]...]).
     def forward(self, x):
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.fullyConnected(x.view(x.size(0), -1)))
         return self.head(x.view(x.size(0), -1))
 
 resize = T.Compose([T.ToPILImage(),
-                    T.Resize(40, interpolation=Image.CUBIC),
+                    T.Resize(84, interpolation=Image.CUBIC),
+                    T.Grayscale(1),#这里加了一个把它变成灰度图像
                     T.ToTensor()])
 
 
@@ -109,15 +118,22 @@ def get_screen():
     # screen = screen[:, :, slice_range]
     # # Convert to float, rescale, convert to torch tensor
     # # (this doesn't require a copy)
+
+    #这里没改，但是好像这样出来以后灰度图像显示出来就变成全黑的了，看看怎么回事
     screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
     screen = torch.from_numpy(screen)
     # Resize, and add a batch dimension (BCHW)
+
+    #注意这里应该把screen先截取成方形然后再执行下面的语句，或者也可以先不截取，这样的话神经网络的输入是84*110,不会报错，但是和论文的方形的不太一样
+    #这个resize是上面定义的，就是一系列变换
     return resize(screen).unsqueeze(0).to(device)
 
 
 env.reset()
 plt.figure()
-plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).numpy(),
+
+#强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
+plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).squeeze().numpy(),
            interpolation='none')
 plt.title('Example extracted screen')
 plt.show()
