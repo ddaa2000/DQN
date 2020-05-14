@@ -261,6 +261,13 @@ for i_episode in range(num_episodes):
         # Select and perform an action
         action = select_action(state)
 
+        plt.figure(1)
+
+        # 强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
+        print(get_screen())
+        plt.imshow(env.render(mode='rgb_array'),
+                   interpolation='none')
+
         _, reward, done, _ = env.step(action.item())
         reward = torch.tensor([reward], device=device)
 
