@@ -133,7 +133,8 @@ env.reset()
 plt.figure()
 
 #强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
-plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).squeeze().numpy(),
+print(get_screen())
+plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).repeat(1,1,3).numpy(),
            interpolation='none')
 plt.title('Example extracted screen')
 plt.show()
@@ -223,6 +224,7 @@ def optimize_model():
     action_batch = torch.cat(batch.action)
     reward_batch = torch.cat(batch.reward)
 
+
     # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
     # columns of actions taken. These are the actions which would've been taken
     # for each batch state according to policy_net
@@ -258,6 +260,7 @@ for i_episode in range(num_episodes):
     for t in count():
         # Select and perform an action
         action = select_action(state)
+
         _, reward, done, _ = env.step(action.item())
         reward = torch.tensor([reward], device=device)
 
@@ -270,6 +273,7 @@ for i_episode in range(num_episodes):
             next_state = None
 
         # Store the transition in memory
+
         memory.push(state, action, next_state, reward)
 
         # Move to the next state
