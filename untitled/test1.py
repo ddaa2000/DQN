@@ -218,6 +218,9 @@ def optimize_model():
     # (a final state would've been the one after which simulation ended)
     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                           batch.next_state)), device=device, dtype=torch.bool)
+    print("mask and shape")
+    print(non_final_mask)
+    print(non_final_mask.shape)
     non_final_next_states = torch.cat([s for s in batch.next_state
                                                 if s is not None])
     state_batch = torch.cat(batch.state)
@@ -228,6 +231,12 @@ def optimize_model():
     # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
     # columns of actions taken. These are the actions which would've been taken
     # for each batch state according to policy_net
+    temp = policy_net(state_batch)
+    print("the shape is")
+    print(temp.shape)
+    print(action_batch.shape)
+
+    #这返回的是一个batch的以当前网络预估的如果执行了记忆中的动作则预计得到的奖励，即Q(s,a,theta_i)
     state_action_values = policy_net(state_batch).gather(1, action_batch)
 
     # Compute V(s_{t+1}) for all next states.
@@ -236,17 +245,24 @@ def optimize_model():
     # This is merged based on the mask, such that we'll have either the expected
     # state value or 0 in case the state was final.
     next_state_values = torch.zeros(BATCH_SIZE, device=device)
+
+    #取每个next_state的所有可能的action可以得到的预计的最大奖励值，即maxQ(s',a';theta_i-1)的batch
     next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0].detach()
     # Compute the expected Q values
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
+    print(expected_state_action_values.shape)
+    print(expected_state_action_values.unsqueeze(1).shape)
+    print(state_action_values.shape)
+
     # Compute Huber loss
-    loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
+    loss = F.smooth_mse_loss(state_action_values, expected_state_action_values.unsqueeze(1))
 
     # Optimize the model
     optimizer.zero_grad()
     loss.backward()
     for param in policy_net.parameters():
+        #应该是把梯度限制在一定范围内
         param.grad.data.clamp_(-1, 1)
     optimizer.step()
 
