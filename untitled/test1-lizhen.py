@@ -18,6 +18,7 @@ import torchvision.transforms as T
 env = gym.make('Pong-v0').unwrapped
 
 # set up matplotlib
+
 is_ipython = 'inline' in matplotlib.get_backend()
 if is_ipython:
     from IPython import display
@@ -55,32 +56,41 @@ class DQN(nn.Module):
 
     def __init__(self, h, w, outputs):
         super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=5, stride=2)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
-        self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
-        self.bn3 = nn.BatchNorm2d(32)
+        #这里本来应该是4个channel即：
+        self.conv1 = nn.Conv2d(4, 16, kernel_size=8, stride=4)
+        #但是由于现在state只包含了一帧所以现在这样写以免报错：
+        #self.conv1 = nn.Conv2d(1, 16, kernel_size=8, stride=4)
+       # self.bn1 = nn.BatchNorm2d(16)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=4, stride=2)
+       # self.bn2 = nn.BatchNorm2d(32)
+
+       # self.bn3 = nn.BatchNorm2d(32)
 
         # Number of Linear input connections depends on output of conv2d layers
         # and therefore the input image size, so compute it.
-        def conv2d_size_out(size, kernel_size = 5, stride = 2):
-            return (size - (kernel_size - 1) - 1) // stride  + 1
-        convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w)))
-        convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h)))
+        def conv2d_size_out1(size, kernel_size=8, stride=4):
+            return (size - (kernel_size - 1) - 1) // stride + 1
+
+        def conv2d_size_out2(size, kernel_size = 4, stride=2):
+            return (size - (kernel_size - 1) - 1) // stride + 1
+
+        convw = conv2d_size_out2(conv2d_size_out1(w))
+        convh = conv2d_size_out2(conv2d_size_out1(h))
         linear_input_size = convw * convh * 32
-        self.head = nn.Linear(linear_input_size, outputs)
+        self.fullyConnected = nn.Linear(linear_input_size, 256)
+        self.head = nn.Linear(256, outputs)
 
     # Called with either one element to determine next action, or a batch
     # during optimization. Returns tensor([[left0exp,right0exp]...]).
     def forward(self, x):
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.fullyConnected(x.view(x.size(0), -1)))
         return self.head(x.view(x.size(0), -1))
 
 resize = T.Compose([T.ToPILImage(),
-                    T.Resize(40, interpolation=Image.CUBIC),
+                    T.Resize((84,84), interpolation=Image.CUBIC),#试着在这里直接变成84*84
+                    T.Grayscale(1),#这里加了一个把它变成灰度图像
                     T.ToTensor()])
 
 
@@ -93,6 +103,7 @@ def get_screen():
     # Returned screen requested by gym is 400x600x3, but is sometimes larger
     # such as 800x1200x3. Transpose it into torch order (CHW).
     screen = env.render(mode='rgb_array').transpose((2, 0, 1))
+    # screen.shape=(3,210,160)
     # # Cart is in the lower half, so strip off the top and bottom of the screen
     # _, screen_height, screen_width = screen.shape
     # screen = screen[:, int(screen_height*0.4):int(screen_height * 0.8)]
@@ -109,23 +120,32 @@ def get_screen():
     # screen = screen[:, :, slice_range]
     # # Convert to float, rescale, convert to torch tensor
     # # (this doesn't require a copy)
+
+    #这里没改，但是好像这样出来以后灰度图像显示出来就变成全黑的了，看看怎么回事
     screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
     screen = torch.from_numpy(screen)
+    #print(screen.shape)
     # Resize, and add a batch dimension (BCHW)
+
+    #注意这里应该把screen先截取成方形然后再执行下面的语句，或者也可以先不截取，这样的话神经网络的输入是84*110,不会报错，但是和论文的方形的不太一样
+    #这个resize是上面定义的，就是一系列变换
     return resize(screen).unsqueeze(0).to(device)
 
 
 env.reset()
 plt.figure()
-plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).numpy(),
+
+#强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
+print(get_screen())
+plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).repeat(1,1,3).numpy(),
            interpolation='none')
 plt.title('Example extracted screen')
 plt.show()
 
-BATCH_SIZE = 128
+BATCH_SIZE = 32#从128调整到论文中的32
 GAMMA = 0.999
-EPS_START = 0.9
-EPS_END = 0.05
+EPS_START = 1#初始值和结束值调整到与论文中相同
+EPS_END = 0.1
 EPS_DECAY = 200
 TARGET_UPDATE = 10
 
@@ -153,8 +173,13 @@ steps_done = 0
 def select_action(state):
     global steps_done
     sample = random.random()
-    eps_threshold = EPS_END + (EPS_START - EPS_END) * \
-        math.exp(-1. * steps_done / EPS_DECAY)
+    #eps_threshold = EPS_END + (EPS_START - EPS_END) * \
+    #   math.exp(-1. * steps_done / EPS_DECAY)
+    #论文中从1到0.1在1000000轮内线性下降，1000000轮后保持0.1
+    if steps_done <= 1000000:
+        eps_threshold = EPS_START - (EPS_START-EPS_END) * steps_done/1000000
+    else:
+        eps_threshold = 0.1
     steps_done += 1
     if sample > eps_threshold:
         with torch.no_grad():
@@ -206,6 +231,7 @@ def optimize_model():
     state_batch = torch.cat(batch.state)
     action_batch = torch.cat(batch.action)
     reward_batch = torch.cat(batch.reward)
+    #print(state_batch.shape)
 
     # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
     # columns of actions taken. These are the actions which would've been taken
@@ -223,6 +249,7 @@ def optimize_model():
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
     # Compute Huber loss
+    #与论文中定义的损失函数不同，论文里是均方误差
     loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
 
     # Optimize the model
@@ -236,28 +263,47 @@ num_episodes = 50
 for i_episode in range(num_episodes):
     # Initialize the environment and state
     env.reset()
-    last_screen = get_screen()
+    #last_screen = get_screen()
     current_screen = get_screen()
-    state = current_screen - last_screen
-    for t in count():
+    #state = current_screen - last_screen
+    # 关于最开始几帧的处理，如果未能截取够四帧，剩下的由零值填补。不知道这样可不可行？
+    s = current_screen
+    zero = torch.zeros(s.shape)
+    state = torch.cat((s,zero,zero,zero),dim=1)
+    # print('state_all shape:',state_all.shape)
+    #print('state_all:', state_all)
+    for t in count(): # count()作用：生成无限序列，从0开始，只有通过显示中断操作使其退出循环，否则一直循环下去
         # Select and perform an action
-        action = select_action(state)
-        _, reward, done, _ = env.step(action.item())
-        reward = torch.tensor([reward], device=device)
+
+        action = select_action(state)#选择动作
+
+        plt.figure(1)
+
+        # 强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
+        # 在resize上改动后，图像变为84*84
+        #print(get_screen().shape)
+        plt.imshow(env.render(mode='rgb_array'),
+                   interpolation='none')
+        _, reward, done, _ = env.step(action.item())#执行动作
+        plt.pause(0.001)
+        reward = torch.tensor([reward], device=device)#执行动作之后得到的奖励
 
         # Observe new state
-        last_screen = current_screen
+        #last_screen = current_screen
         current_screen = get_screen()
         if not done:
-            next_state = current_screen - last_screen
+            next_state = torch.cat((current_screen,state[0][0].unsqueeze(0).unsqueeze(0),state[0][1].unsqueeze(0).unsqueeze(0),state[0][2].unsqueeze(0).unsqueeze(0)),dim=1)
         else:
             next_state = None
-
+        #print(next_state)
+        #print(next_state.shape)
         # Store the transition in memory
+
         memory.push(state, action, next_state, reward)
 
         # Move to the next state
         state = next_state
+
 
         # Perform one step of the optimization (on the target network)
         optimize_model()
