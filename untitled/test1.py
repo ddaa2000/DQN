@@ -88,7 +88,7 @@ class DQN(nn.Module):
         return self.head(x.view(x.size(0), -1))
 
 resize = T.Compose([T.ToPILImage(),
-                    T.Resize(84, interpolation=Image.CUBIC),
+                    T.Resize((84,84), interpolation=Image.CUBIC),#试着在这里直接变成84*84
                     T.Grayscale(1),#这里加了一个把它变成灰度图像
                     T.ToTensor()])
 
@@ -175,8 +175,8 @@ def select_action(state):
     #eps_threshold = EPS_END + (EPS_START - EPS_END) * \
     #   math.exp(-1. * steps_done / EPS_DECAY)
     #论文中从1到0.1在1000000轮内线性下降，1000000轮后保持0.1
-    if steps_done <= 1000000:
-        eps_threshold = EPS_START - (EPS_START-EPS_END) * steps_done/1000000
+    if steps_done <= 100000:
+        eps_threshold = EPS_START - (EPS_START-EPS_END) * steps_done/100000
     else:
         eps_threshold = 0.1
     steps_done += 1
@@ -291,18 +291,12 @@ for i_episode in range(num_episodes):
         # Select and perform an action
         k = k+1
         action = select_action(state)#选择动作
+        #action = torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
 
-        if(k==10):
-            plt.figure(1)
 
-            # 强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
-            #print(get_screen())
-            plt.imshow(env.render(mode='rgb_array'),
-                   interpolation='none')
-            plt.pause(0.001)
-            k = 0
         _, reward, done, _ = env.step(action.item())  # 执行动作
         reward = torch.tensor([reward], device=device)#执行动作之后得到的奖励
+
 
         # Observe new state
         #last_screen = current_screen
@@ -319,16 +313,29 @@ for i_episode in range(num_episodes):
 
         # Move to the next state
         state = next_state
+        if (k == 10):
+            plt.figure(1)
+
+            # 强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
+            # print(get_screen())
+            #plt.imshow(env.render(mode='rgb_array'),
+             #          interpolation='none')
+            plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).repeat(1, 1, 3).numpy(),
+                       interpolation='none')
+            plt.pause(0.001)
+
+            k = 0
 
         # Perform one step of the optimization (on the target network)
         optimize_model()
+        target_net.load_state_dict(policy_net.state_dict())
         if done:
             episode_durations.append(t + 1)
             plot_durations()
             break
     # Update the target network, copying all weights and biases in DQN
-    if i_episode % TARGET_UPDATE == 0:
-        target_net.load_state_dict(policy_net.state_dict())
+    #if i_episode % TARGET_UPDATE == 0:
+
 
 print('Complete')
 env.render()
