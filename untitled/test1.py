@@ -135,7 +135,7 @@ env.reset()
 plt.figure()
 
 #强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
-print(get_screen())
+#print(get_screen())
 plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).repeat(1,1,3).numpy(),
            interpolation='none')
 plt.title('Example extracted screen')
@@ -225,9 +225,9 @@ def optimize_model():
     # (a final state would've been the one after which simulation ended)
     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                           batch.next_state)), device=device, dtype=torch.bool)
-    print("mask and shape")
-    print(non_final_mask)
-    print(non_final_mask.shape)
+    #print("mask and shape")
+    #print(non_final_mask)
+    #print(non_final_mask.shape)
     non_final_next_states = torch.cat([s for s in batch.next_state
                                                 if s is not None])
     state_batch = torch.cat(batch.state)
@@ -239,9 +239,9 @@ def optimize_model():
     # columns of actions taken. These are the actions which would've been taken
     # for each batch state according to policy_net
     temp = policy_net(state_batch)
-    print("the shape is")
-    print(temp.shape)
-    print(action_batch.shape)
+    #print("the shape is")
+    #print(temp.shape)
+    #print(action_batch.shape)
 
     #这返回的是一个batch的以当前网络预估的如果执行了记忆中的动作则预计得到的奖励，即Q(s,a,theta_i)
     state_action_values = policy_net(state_batch).gather(1, action_batch)
@@ -258,9 +258,9 @@ def optimize_model():
     # Compute the expected Q values
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
-    print(expected_state_action_values.shape)
-    print(expected_state_action_values.unsqueeze(1).shape)
-    print(state_action_values.shape)
+    #print(expected_state_action_values.shape)
+    #print(expected_state_action_values.unsqueeze(1).shape)
+    #print(state_action_values.shape)
 
     # Compute Huber loss
     loss = F.mse_loss(state_action_values, expected_state_action_values.unsqueeze(1))
@@ -286,19 +286,22 @@ for i_episode in range(num_episodes):
     state = torch.cat((s, s, s, s), dim=1)
     # print('state_all shape:',state_all.shape)
     #print('state_all:', state_all)
+    k = 0
     for t in count(): # count()作用：生成无限序列，从0开始，只有通过显示中断操作使其退出循环，否则一直循环下去
         # Select and perform an action
-
+        k = k+1
         action = select_action(state)#选择动作
 
-        plt.figure(1)
+        if(k==10):
+            plt.figure(1)
 
-        # 强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
-        print(get_screen())
-        plt.imshow(env.render(mode='rgb_array'),
+            # 强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
+            #print(get_screen())
+            plt.imshow(env.render(mode='rgb_array'),
                    interpolation='none')
-        _, reward, done, _ = env.step(action.item())#执行动作
-        plt.pause(0.001)
+            plt.pause(0.001)
+            k = 0
+        _, reward, done, _ = env.step(action.item())  # 执行动作
         reward = torch.tensor([reward], device=device)#执行动作之后得到的奖励
 
         # Observe new state
