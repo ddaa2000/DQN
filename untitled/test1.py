@@ -18,7 +18,6 @@ import torchvision.transforms as T
 env = gym.make('Pong-v0').unwrapped
 
 # set up matplotlib
-
 is_ipython = 'inline' in matplotlib.get_backend()
 if is_ipython:
     from IPython import display
@@ -58,8 +57,8 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
         #这里本来应该是4个channel即：
         self.conv1 = nn.Conv2d(4, 16, kernel_size=8, stride=4)
-        #但是由于现在state只包含了一帧所以现在这样写以免报错：
-        #self.conv1 = nn.Conv2d(1, 16, kernel_size=8, stride=4)
+        # 但是由于现在state只包含了一帧所以现在这样写以免报错：
+        # self.conv1 = nn.Conv2d(1, 16, kernel_size=8, stride=4)
        # self.bn1 = nn.BatchNorm2d(16)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=4, stride=2)
        # self.bn2 = nn.BatchNorm2d(32)
@@ -136,7 +135,7 @@ env.reset()
 plt.figure()
 
 #强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
-print(get_screen())
+#print(get_screen())
 plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).repeat(1,1,3).numpy(),
            interpolation='none')
 plt.title('Example extracted screen')
@@ -176,8 +175,8 @@ def select_action(state):
     #eps_threshold = EPS_END + (EPS_START - EPS_END) * \
     #   math.exp(-1. * steps_done / EPS_DECAY)
     #论文中从1到0.1在1000000轮内线性下降，1000000轮后保持0.1
-    if steps_done <= 1000000:
-        eps_threshold = EPS_START - (EPS_START-EPS_END) * steps_done/1000000
+    if steps_done <= 100000:
+        eps_threshold = EPS_START - (EPS_START-EPS_END) * steps_done/100000
     else:
         eps_threshold = 0.1
     steps_done += 1
@@ -226,6 +225,9 @@ def optimize_model():
     # (a final state would've been the one after which simulation ended)
     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                           batch.next_state)), device=device, dtype=torch.bool)
+    #print("mask and shape")
+    #print(non_final_mask)
+    #print(non_final_mask.shape)
     non_final_next_states = torch.cat([s for s in batch.next_state
                                                 if s is not None])
     state_batch = torch.cat(batch.state)
@@ -236,6 +238,12 @@ def optimize_model():
     # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
     # columns of actions taken. These are the actions which would've been taken
     # for each batch state according to policy_net
+    temp = policy_net(state_batch)
+    #print("the shape is")
+    #print(temp.shape)
+    #print(action_batch.shape)
+
+    #这返回的是一个batch的以当前网络预估的如果执行了记忆中的动作则预计得到的奖励，即Q(s,a,theta_i)
     state_action_values = policy_net(state_batch).gather(1, action_batch)
 
     # Compute V(s_{t+1}) for all next states.
@@ -244,18 +252,24 @@ def optimize_model():
     # This is merged based on the mask, such that we'll have either the expected
     # state value or 0 in case the state was final.
     next_state_values = torch.zeros(BATCH_SIZE, device=device)
+
+    #取每个next_state的所有可能的action可以得到的预计的最大奖励值，即maxQ(s',a';theta_i-1)的batch
     next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0].detach()
     # Compute the expected Q values
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
+    #print(expected_state_action_values.shape)
+    #print(expected_state_action_values.unsqueeze(1).shape)
+    #print(state_action_values.shape)
+
     # Compute Huber loss
-    #与论文中定义的损失函数不同，论文里是均方误差
-    loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
+    loss = F.mse_loss(state_action_values, expected_state_action_values.unsqueeze(1))
 
     # Optimize the model
     optimizer.zero_grad()
     loss.backward()
     for param in policy_net.parameters():
+        #应该是把梯度限制在一定范围内
         param.grad.data.clamp_(-1, 1)
     optimizer.step()
 
@@ -269,24 +283,29 @@ for i_episode in range(num_episodes):
     # 关于最开始几帧的处理，如果未能截取够四帧，剩下的由零值填补。不知道这样可不可行？
     s = current_screen
     zero = torch.zeros(s.shape)
-    state = torch.cat((s,zero,zero,zero),dim=1)
+    state = torch.cat((s, s, s, s), dim=1)
     # print('state_all shape:',state_all.shape)
     #print('state_all:', state_all)
+    k = 0
+    kk=0
+    action_save=0 # 保存动作
     for t in count(): # count()作用：生成无限序列，从0开始，只有通过显示中断操作使其退出循环，否则一直循环下去
         # Select and perform an action
+        k = k+1
+        # frame-skipping操作
+        if kk % 4 == 0:
+            action = select_action(state)#选择动作
+            action_save = action
+            kk = kk + 1
+        else:
+            action = action_save
+            kk = kk + 1
+        #action = torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
 
-        action = select_action(state)#选择动作
 
-        plt.figure(1)
-
-        # 强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
-        # 在resize上改动后，图像变为84*84
-        #print(get_screen().shape)
-        plt.imshow(env.render(mode='rgb_array'),
-                   interpolation='none')
-        _, reward, done, _ = env.step(action.item())#执行动作
-        plt.pause(0.001)
+        _, reward, done, _ = env.step(action.item())  # 执行动作
         reward = torch.tensor([reward], device=device)#执行动作之后得到的奖励
+
 
         # Observe new state
         #last_screen = current_screen
@@ -303,17 +322,29 @@ for i_episode in range(num_episodes):
 
         # Move to the next state
         state = next_state
+        if (k == 10):
+            plt.figure(1)
 
+            # 强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
+            # print(get_screen())
+            #plt.imshow(env.render(mode='rgb_array'),
+             #          interpolation='none')
+            plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).repeat(1, 1, 3).numpy(),
+                       interpolation='none')
+            plt.pause(0.001)
+
+            k = 0
 
         # Perform one step of the optimization (on the target network)
         optimize_model()
+        target_net.load_state_dict(policy_net.state_dict())
         if done:
             episode_durations.append(t + 1)
             plot_durations()
             break
     # Update the target network, copying all weights and biases in DQN
-    if i_episode % TARGET_UPDATE == 0:
-        target_net.load_state_dict(policy_net.state_dict())
+    #if i_episode % TARGET_UPDATE == 0:
+
 
 print('Complete')
 env.render()
