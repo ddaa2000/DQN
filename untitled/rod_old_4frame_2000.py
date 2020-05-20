@@ -14,8 +14,10 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torchvision.transforms as T
 
+from torch.utils.data import Dataset, DataLoader
 
-env = gym.make('Breakout-v0').unwrapped
+
+env = gym.make('MountainCar-v0').unwrapped
 
 # set up matplotlib
 is_ipython = 'inline' in matplotlib.get_backend()
@@ -49,7 +51,7 @@ class ReplayMemory(object):
         self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
+       return random.sample(self.memory, batch_size)
 
     def __len__(self):
         return len(self.memory)
@@ -58,40 +60,32 @@ class DQN(nn.Module):
 
     def __init__(self, h, w, outputs):
         super(DQN, self).__init__()
-        #这里本来应该是4个channel即：
-        self.conv1 = nn.Conv2d(4, 16, kernel_size=8, stride=4)
-        # 但是由于现在state只包含了一帧所以现在这样写以免报错：
-        # self.conv1 = nn.Conv2d(1, 16, kernel_size=8, stride=4)
-       # self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=4, stride=2)
-       # self.bn2 = nn.BatchNorm2d(32)
-
-       # self.bn3 = nn.BatchNorm2d(32)
+        self.conv1 = nn.Conv2d(4, 16, kernel_size=5, stride=2)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
+        self.bn2 = nn.BatchNorm2d(32)
+        self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
+        self.bn3 = nn.BatchNorm2d(32)
 
         # Number of Linear input connections depends on output of conv2d layers
         # and therefore the input image size, so compute it.
-        def conv2d_size_out1(size, kernel_size=8, stride=4):
-            return (size - (kernel_size - 1) - 1) // stride + 1
-
-        def conv2d_size_out2(size, kernel_size = 4, stride=2):
-            return (size - (kernel_size - 1) - 1) // stride + 1
-
-        convw = conv2d_size_out2(conv2d_size_out1(w))
-        convh = conv2d_size_out2(conv2d_size_out1(h))
+        def conv2d_size_out(size, kernel_size = 5, stride = 2):
+            return (size - (kernel_size - 1) - 1) // stride  + 1
+        convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w)))
+        convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h)))
         linear_input_size = convw * convh * 32
-        self.fullyConnected = nn.Linear(linear_input_size, 256)
-        self.head = nn.Linear(256, outputs)
+        self.head = nn.Linear(linear_input_size, outputs)
 
     # Called with either one element to determine next action, or a batch
     # during optimization. Returns tensor([[left0exp,right0exp]...]).
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.fullyConnected(x.view(x.size(0), -1)))
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
         return self.head(x.view(x.size(0), -1))
 
 resize = T.Compose([T.ToPILImage(),
-                    T.Resize((84,84), interpolation=Image.CUBIC),#试着在这里直接变成84*84
+                    T.Resize((42,42), interpolation=Image.CUBIC),#试着在这里直接变成84*84
                     T.Grayscale(1),#这里加了一个把它变成灰度图像
                     T.ToTensor()])
 
@@ -144,7 +138,7 @@ plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).repeat(1,1,3).numpy(),
 plt.title('Example extracted screen')
 plt.show()
 
-BATCH_SIZE = 32#从128调整到论文中的32
+BATCH_SIZE = 128#从128调整到论文中的32
 GAMMA = 0.999
 EPS_START = 1#初始值和结束值调整到与论文中相同
 EPS_END = 0.1
@@ -173,7 +167,25 @@ steps_done = 0
 
 
 def select_action(state):
-    return torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
+    global steps_done
+    sample = random.random()
+    #eps_threshold = EPS_END + (EPS_START - EPS_END) * \
+    #   math.exp(-1. * steps_done / EPS_DECAY)
+    #论文中从1到0.1在1000000轮内线性下降，1000000轮后保持0.1
+    if steps_done <= 10000:
+        eps_threshold = EPS_START - (EPS_START-EPS_END) * steps_done/10000
+    else:
+        eps_threshold = 0.1
+    steps_done += 1
+    #print(eps_threshold)
+    if sample > eps_threshold:
+        with torch.no_grad():
+            # t.max(1) will return largest column value of each row.
+            # second column on max result is index of where max element was
+            # found, so we pick action with the larger expected reward.
+            return policy_net(state).max(1)[1].view(1, 1)
+    else:
+        return torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
 
 
 episode_durations = []
@@ -237,7 +249,7 @@ def optimize_model():
     # on the "older" target_net; selecting their best reward with max(1)[0].
     # This is merged based on the mask, such that we'll have either the expected
     # state value or 0 in case the state was final.
-    next_state_values = torch.zeros(BATCH_SIZE, device=device)
+    next_state_values = torch.zeros(BATCH_SIZE, device=device).cuda()
 
     #取每个next_state的所有可能的action可以得到的预计的最大奖励值，即maxQ(s',a';theta_i-1)的batch
     next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0].detach()
@@ -254,14 +266,15 @@ def optimize_model():
     # Optimize the model
     optimizer.zero_grad()
     loss.backward()
-    for param in policy_net.parameters():
+    #for param in policy_net.parameters():
         #应该是把梯度限制在一定范围内
-        param.grad.data.clamp_(-1, 1)
+        #param.grad.data.clamp_(-1, 1)
     optimizer.step()
 
-num_episodes = 100
-PATH = './DQN_net.pth'
-policy_net.load_state_dict(torch.load(PATH))
+num_episodes = 2000
+
+PATH = './acrobot.pth'
+
 for i_episode in range(num_episodes):
     # Initialize the environment and state
     env.reset()
@@ -284,8 +297,8 @@ for i_episode in range(num_episodes):
 
 
         _, reward, done, _ = env.step(action.item())  # 执行动作
-        reward = torch.tensor([reward], device=device)#执行动作之后得到的奖励
 
+        reward = torch.tensor([reward], device=device)#执行动作之后得到的奖励
 
         # Observe new state
         #last_screen = current_screen
@@ -298,38 +311,49 @@ for i_episode in range(num_episodes):
         #print(next_state.shape)
         # Store the transition in memory
 
-        #memory.push(state, action, next_state, reward)
+
+        memory.push(state, action, next_state, reward)
+
 
 
 
         # Move to the next state
         state = next_state
 
-        if (k == 3):
-            plt.figure(1)
+        optimize_model()
+        #if (k == 64):
+
+
+            #plt.figure(1)
 
             # 强行改了一下，使得图像变成了110*84，但是论文上要的是84*84，需要再改一下
             # print(get_screen())
-            plt.imshow(env.render(mode='rgb_array'),
-                       interpolation='none')
+            #plt.imshow(env.render(mode='rgb_array'),
+             #          interpolation='none')
             #plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).repeat(1, 1, 3).numpy(),
             #           interpolation='none')
-            plt.pause(0.001)
+            #plt.pause(0.001)
 
-            k = 0
+            #k = 0
 
         # Perform one step of the optimization (on the target network)
-        #optimize_model()
-        #target_net.load_state_dict(policy_net.state_dict())
+
         if done:
+            target_net.load_state_dict(policy_net.state_dict())
             episode_durations.append(t + 1)
             plot_durations()
+            print(t+1)
             break
+
+    target_net.load_state_dict(policy_net.state_dict())
     # Update the target network, copying all weights and biases in DQN
     #if i_episode % TARGET_UPDATE == 0:
+    #if(i_episode % 10 == 0):
+    #    target_net.load_state_dict(policy_net.state_dict())
 
 
-#torch.save(target_net.state_dict(), PATH)
+
+torch.save(target_net.state_dict(), PATH)
 print('Complete')
 env.render()
 env.close()
